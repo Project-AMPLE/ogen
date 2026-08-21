@@ -21,7 +21,11 @@ func isBinary(s *jsonschema.Schema) bool {
 	}
 
 	switch s.Type {
-	case jsonschema.Empty, jsonschema.String:
+	case jsonschema.Empty:
+		// OpenAPI 3.1 (JSON Schema 2020-12) dropped format: binary, and spells
+		// a binary payload as a schema with no type at all.
+		return true
+	case jsonschema.String:
 		return s.Format == "binary"
 	default:
 		return false
@@ -86,6 +90,13 @@ func isMultipartFile(ctx *genctx, t *ir.Type, p *jsonschema.Property) (*ir.Type,
 		}
 		return r, nil
 	case t.IsPrimitive():
+		if !isBinary(p.Schema) {
+			return nil, nil
+		}
+		return file, nil
+	case t.Is(ir.KindAny):
+		// A part with no schema type maps to any, which is how OpenAPI 3.1
+		// spells a binary part now that format: binary is gone.
 		if !isBinary(p.Schema) {
 			return nil, nil
 		}
