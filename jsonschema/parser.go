@@ -383,7 +383,7 @@ func (p *Parser) parseSchema(schema *RawSchema, ctx *jsonpointer.ResolveCtx, hoo
 				"type", "enum", "const", "nullable", "format", "default",
 				"oneOf", "anyOf", "allOf", "discriminator",
 				"description", "example", "examples", "deprecated",
-				"additionalProperties", "xml",
+				"additionalProperties", "unevaluatedProperties", "xml",
 			} {
 				fset[f] = struct{}{}
 			}

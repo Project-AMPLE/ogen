@@ -636,3 +636,62 @@ func TestSchemaInferTypes(t *testing.T) {
 		})
 	}
 }
+
+// unevaluatedProperties is the JSON Schema 2020-12 (OpenAPI 3.1) spelling of an
+// open object. For a schema that does not compose, it carries the same meaning
+// as additionalProperties and must parse to the same thing.
+func TestSchemaUnevaluatedProperties(t *testing.T) {
+	parse := func(t *testing.T, s *RawSchema) *Schema {
+		t.Helper()
+		out, err := NewParser(Settings{}).Parse(s, testCtx())
+		require.NoError(t, err)
+		return out
+	}
+
+	props := []RawProperty{
+		{Name: "id", Schema: &RawSchema{Type: "string"}},
+	}
+
+	unevaluated := parse(t, &RawSchema{
+		Type:                  "object",
+		Properties:            props,
+		UnevaluatedProperties: &AdditionalProperties{},
+	})
+	additional := parse(t, &RawSchema{
+		Type:                 "object",
+		Properties:           props,
+		AdditionalProperties: &AdditionalProperties{},
+	})
+
+	require.Equal(t, additional, unevaluated)
+	require.NotNil(t, unevaluated.AdditionalProperties)
+	require.True(t, *unevaluated.AdditionalProperties)
+}
+
+// With type inference enabled and no explicit type, unevaluatedProperties
+// identifies the schema as an object, the same way additionalProperties does.
+func TestSchemaUnevaluatedPropertiesInfersObject(t *testing.T) {
+	out, err := NewParser(Settings{InferTypes: true}).Parse(&RawSchema{
+		UnevaluatedProperties: &AdditionalProperties{},
+	}, testCtx())
+	require.NoError(t, err)
+	require.Equal(t, Object, out.Type)
+}
+
+// In the general case unevaluatedProperties is composition-aware: it applies to
+// properties left unevaluated by the subschemas, which is not what
+// additionalProperties means. A composing schema is therefore left alone rather
+// than being given the additionalProperties treatment.
+func TestSchemaUnevaluatedPropertiesComposition(t *testing.T) {
+	out, err := NewParser(Settings{}).Parse(&RawSchema{
+		AllOf: []*RawSchema{
+			{
+				Type:       "object",
+				Properties: []RawProperty{{Name: "id", Schema: &RawSchema{Type: "string"}}},
+			},
+		},
+		UnevaluatedProperties: &AdditionalProperties{},
+	}, testCtx())
+	require.NoError(t, err)
+	require.Nil(t, out.AdditionalProperties)
+}
