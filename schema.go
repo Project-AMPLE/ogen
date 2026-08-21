@@ -39,6 +39,8 @@ type Schema struct {
 	// Value can be boolean or object. Inline or referenced schema MUST be of a Schema Object
 	// and not a standard JSON Schema. Consistent with JSON Schema, additionalProperties defaults to true.
 	AdditionalProperties *AdditionalProperties `json:"additionalProperties,omitempty" yaml:"additionalProperties,omitempty"`
+	// UnevaluatedProperties is the JSON Schema 2020-12 (OpenAPI 3.1) keyword.
+	UnevaluatedProperties *AdditionalProperties `json:"unevaluatedProperties,omitempty" yaml:"unevaluatedProperties,omitempty"`
 
 	// The value of "patternProperties" MUST be an object. Each property
 	// name of this object SHOULD be a valid regular expression, according

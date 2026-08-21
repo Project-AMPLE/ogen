@@ -295,6 +295,7 @@ func (p *Parser) parseSchema(schema *RawSchema, ctx *jsonpointer.ResolveCtx, hoo
 			switch {
 			case len(schema.Properties) > 0 ||
 				schema.AdditionalProperties != nil ||
+				schema.UnevaluatedProperties != nil ||
 				schema.PatternProperties != nil ||
 				schema.MaxProperties != nil ||
 				schema.MinProperties != nil:
@@ -464,7 +465,12 @@ func (p *Parser) parseSchema(schema *RawSchema, ctx *jsonpointer.ResolveCtx, hoo
 			return nil, err
 		}
 
-		if ap := schema.AdditionalProperties; ap != nil {
+		ap := schema.AdditionalProperties
+		if ap == nil && len(schema.AllOf) == 0 && len(schema.AnyOf) == 0 && len(schema.OneOf) == 0 {
+			// Equivalent to additionalProperties for a non-composing schema.
+			ap = schema.UnevaluatedProperties
+		}
+		if ap != nil {
 			var additional bool
 			if val := ap.Bool; val != nil {
 				additional = *val

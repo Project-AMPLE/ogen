@@ -18,6 +18,12 @@ type RawSchema struct {
 	Format               string                `json:"format,omitempty" yaml:"format,omitempty"`
 	Properties           RawProperties         `json:"properties,omitempty" yaml:"properties,omitempty"`
 	AdditionalProperties *AdditionalProperties `json:"additionalProperties,omitempty" yaml:"additionalProperties,omitempty"`
+	// UnevaluatedProperties is the JSON Schema 2020-12 (OpenAPI 3.1) keyword.
+	//
+	// In the general case it is composition-aware and not a synonym for
+	// additionalProperties. It is treated as one only for a schema that does
+	// not compose (no allOf/anyOf/oneOf), where the two are equivalent.
+	UnevaluatedProperties *AdditionalProperties `json:"unevaluatedProperties,omitempty" yaml:"unevaluatedProperties,omitempty"`
 	PatternProperties    RawPatternProperties  `json:"patternProperties,omitempty" yaml:"patternProperties,omitempty"`
 	Required             []string              `json:"required,omitempty" yaml:"required,omitempty"`
 	Items                *RawItems             `json:"items,omitempty" yaml:"items,omitempty"`
