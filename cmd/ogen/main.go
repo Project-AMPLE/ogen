@@ -466,7 +466,41 @@ func run() error {
 	return nil
 }
 
+// agentEnvVars are the variables toolchain-manager shims (proto, mise) use to
+// detect an "AI agent environment". On detection proto prints an NDJSON banner
+// to the STDOUT of every `go` command it wraps.
+//
+// That breaks generation, not logging. The goimports pass runs one
+// imports.Process per template file, concurrently, and each builds a ProcessEnv
+// by running `go env -json` and decoding it with a single-object
+// json.Unmarshal. The banner makes that two top-level values, so the decode
+// fails with `invalid character '{' after top-level value` and surfaces as a
+// bogus `goimports:` error against whichever template lost the race.
+//
+// Measured: with these set, generating the largest spec here passed 1 run in 5
+// and the named template differed every time; unset, 5 in 5. Serial `go env`
+// calls are clean, so the corruption only shows under the concurrency
+// goimports already uses -- which is what made it look like a race in ogen.
+//
+// Unsetting in-process is enough: imports.Process derives the subprocess
+// environment from os.Environ().
+var agentEnvVars = []string{
+	"AI_AGENT",
+	"AGENT",
+	"CLAUDECODE",
+	"CLAUDE_CODE_ENTRYPOINT",
+	"CURSOR_TRACE_ID",
+	"CODEX_SANDBOX",
+	"CODEX_THREAD_ID",
+	"GEMINI_SESSION_ID",
+	"OPENCODE_SESSION_ID",
+}
+
 func main() {
+	for _, v := range agentEnvVars {
+		_ = os.Unsetenv(v)
+	}
+
 	if err := run(); err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "%+v\n", err)
 		os.Exit(1)
