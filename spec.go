@@ -562,6 +562,10 @@ type RequestBody struct {
 type Media struct {
 	// The schema defining the content of the request, response, or parameter.
 	Schema *Schema `json:"schema,omitempty" yaml:"schema,omitempty"`
+	// ItemSchema is the OpenAPI 3.2 schema for ONE item of a sequential media
+	// type (text/event-stream, application/jsonl, ...). 3.1 had no way to type
+	// these, so emitters degraded the whole response to `schema: {type: string}`.
+	ItemSchema *Schema `json:"itemSchema,omitempty" yaml:"itemSchema,omitempty"`
 	// Example of the media type.
 	Example ExampleValue `json:"example,omitempty" yaml:"example,omitempty"`
 	// Examples of the media type.

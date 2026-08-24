@@ -455,6 +455,17 @@ func (p *Parser) parseSchema(schema *RawSchema, ctx *jsonpointer.ResolveCtx, hoo
 		}
 	}
 
+	// contentSchema describes the decoded content of a string instance, not the
+	// string itself, so it is parsed as an ordinary sub-schema and hung off the
+	// carrier rather than replacing it. OpenAPI 3.2 SSE reaches the event
+	// payload this way: `data` stays a string, `data.contentSchema` is the type.
+	if schema.ContentSchema != nil {
+		s.ContentSchema, err = p.parse(schema.ContentSchema, ctx)
+		if err != nil {
+			return nil, wrapField("contentSchema", err)
+		}
+	}
+
 	// Object properties
 	{
 		if err := validateMinMax(

@@ -337,6 +337,15 @@ func (g *Generator) normalizeFullSSESchema(schema *jsonschema.Schema, media *ope
 			}
 		}
 
+		// A schema can be BOTH `type: object` and a `oneOf` of variants — that
+		// is exactly what OpenAPI 3.2 SSE emits: an envelope declaring the
+		// common id/event/data/retry fields, refined by one branch per event
+		// type. This arm matches first, so without recursing here the variants
+		// would keep their un-normalized shape and no discriminator.
+		if err := g.normalizeSSEComposition(&clone, media); err != nil {
+			return nil, err
+		}
+
 		return &clone, nil
 	case len(schema.OneOf) > 0:
 		clone := *schema
@@ -351,6 +360,7 @@ func (g *Generator) normalizeFullSSESchema(schema *jsonschema.Schema, media *ope
 			}
 			clone.OneOf[i] = normalized
 		}
+		inferSSEEventDiscriminator(&clone, clone.OneOf)
 		return &clone, nil
 	case len(schema.AnyOf) > 0:
 		clone := *schema
@@ -365,10 +375,100 @@ func (g *Generator) normalizeFullSSESchema(schema *jsonschema.Schema, media *ope
 			}
 			clone.AnyOf[i] = normalized
 		}
+		inferSSEEventDiscriminator(&clone, clone.AnyOf)
 		return &clone, nil
 	default:
 		return nil, errors.New("must be an object or oneOf/anyOf of objects")
 	}
+}
+
+// normalizeSSEComposition normalizes any oneOf/anyOf variants hanging off an SSE
+// envelope schema in place, then infers the event discriminator across them.
+func (g *Generator) normalizeSSEComposition(clone *jsonschema.Schema, media *openapi.MediaType) error {
+	for _, group := range []struct {
+		name     string
+		variants []*jsonschema.Schema
+	}{
+		{"oneOf", clone.OneOf},
+		{"anyOf", clone.AnyOf},
+	} {
+		if len(group.variants) == 0 {
+			continue
+		}
+		normalized := make([]*jsonschema.Schema, len(group.variants))
+		for i, variant := range group.variants {
+			if variant == nil {
+				return errors.Errorf("%s[%d] is nil", group.name, i)
+			}
+			n, err := g.normalizeFullSSESchema(variant, media)
+			if err != nil {
+				return errors.Wrapf(err, "%s[%d]", group.name, i)
+			}
+			normalized[i] = n
+		}
+		if group.name == "oneOf" {
+			clone.OneOf = normalized
+		} else {
+			clone.AnyOf = normalized
+		}
+		inferSSEEventDiscriminator(clone, normalized)
+	}
+	return nil
+}
+
+// inferSSEEventDiscriminator points a sum of SSE events at its `event` field when
+// every variant pins that field to a distinct string const.
+//
+// SSE event unions are discriminated by construction — that is what the `event:`
+// line on the wire IS — but the emitted document rarely says so with a
+// `discriminator` keyword, and every variant carries the same field NAMES
+// (id/event/data/retry). ogen's default inference separates variants by which
+// fields they uniquely have, so it sees three identical shapes and gives up with
+// "can't infer fields discriminator". The information it needs is present, just
+// in the const values rather than the field names.
+//
+// Scoped deliberately to the SSE path: general oneOf handling is shared by every
+// consumer, while this shape is fixed by the SSE spec.
+func inferSSEEventDiscriminator(sum *jsonschema.Schema, variants []*jsonschema.Schema) {
+	const propName = "event"
+
+	if sum.Discriminator != nil || len(variants) < 2 {
+		return
+	}
+
+	seen := make(map[string]struct{}, len(variants))
+	for _, variant := range variants {
+		if variant == nil {
+			return
+		}
+		value, ok := constStringProperty(variant, propName)
+		if !ok {
+			return
+		}
+		// A repeated value cannot discriminate — bail rather than emit a
+		// mapping that silently resolves two variants to one.
+		if _, dup := seen[value]; dup {
+			return
+		}
+		seen[value] = struct{}{}
+	}
+
+	sum.Discriminator = &jsonschema.Discriminator{PropertyName: propName}
+}
+
+// constStringProperty returns the string const pinned on s's named property.
+func constStringProperty(s *jsonschema.Schema, propName string) (string, bool) {
+	for _, prop := range s.Properties {
+		if prop.Name != propName {
+			continue
+		}
+		if prop.Schema == nil || !prop.Schema.ConstSet {
+			return "", false
+		}
+		v, ok := prop.Schema.Const.(string)
+		return v, ok
+	}
+	return "", false
 }
 
 func (g *Generator) generateSSEContent(

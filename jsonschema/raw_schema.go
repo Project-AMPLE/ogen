@@ -50,6 +50,7 @@ type RawSchema struct {
 	Deprecated           bool                  `json:"deprecated,omitempty" yaml:"deprecated,omitempty"`
 	ContentEncoding      string                `json:"contentEncoding,omitempty" yaml:"contentEncoding,omitempty"`
 	ContentMediaType     string                `json:"contentMediaType,omitempty" yaml:"contentMediaType,omitempty"`
+	ContentSchema        *RawSchema            `json:"contentSchema,omitempty" yaml:"contentSchema,omitempty"`
 
 	Discriminator *RawDiscriminator `json:"discriminator,omitempty" yaml:"discriminator,omitempty"`
 	XML           *XML              `json:"xml,omitempty" yaml:"xml,omitempty"`

@@ -145,6 +145,11 @@ func TestGenerate(t *testing.T) {
 			"issue1710.yml": {
 				"sse server response encoding",
 			},
+			// Typed SSE is client-side only upstream: ogen has no server-side
+			// encoder for an event stream yet. Same skip as issue1710.yml.
+			"sse_item_schema.yml": {
+				"sse server response encoding",
+			},
 		}))
 
 	t.Run("Examples", runPositive("_testdata/examples",

@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/ogen-go/ogen"
+	"github.com/ogen-go/ogen/jsonschema"
 	"github.com/ogen-go/ogen/openapi"
 	"github.com/ogen-go/ogen/openapi/parser"
 )
@@ -175,4 +176,87 @@ func TestParseMediaTypeSSEShapeNonEventStreamError(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "x-ogen-sse-event-shape")
 	require.Contains(t, err.Error(), "is only allowed for text/event-stream media type")
+}
+
+// OpenAPI 3.2 moves the SSE payload schema out of `schema` and into `itemSchema`,
+// and reaches the real event type through `data.contentSchema` — a $ref describing
+// the PARSED content of the `data` string rather than `data` itself. The document
+// built below is the shape @typespec/openapi3 1.15.0 emits for an SSEStream<T>.
+func sse32Spec() *ogen.Spec {
+	payload := func(field string) *ogen.Schema {
+		return &ogen.Schema{
+			Type:       "object",
+			Properties: ogen.Properties{{Name: field, Schema: &ogen.Schema{Type: "string"}}},
+		}
+	}
+	branch := func(event, ref string) *ogen.Schema {
+		return &ogen.Schema{
+			Properties: ogen.Properties{
+				{Name: "event", Schema: &ogen.Schema{Const: ogen.Const(`"` + event + `"`)}},
+				{Name: "data", Schema: &ogen.Schema{
+					ContentMediaType: "application/json",
+					ContentSchema:    &ogen.Schema{Ref: ref},
+				}},
+			},
+		}
+	}
+
+	spec := sseSpec(ogen.Media{
+		ItemSchema: &ogen.Schema{
+			Type: "object",
+			Properties: ogen.Properties{
+				{Name: "event", Schema: &ogen.Schema{Type: "string"}},
+				{Name: "data", Schema: &ogen.Schema{Type: "string"}},
+			},
+			Required: []string{"event"},
+			OneOf: []*ogen.Schema{
+				branch("chunk", "#/components/schemas/StreamChunk"),
+				branch("done", "#/components/schemas/StreamDone"),
+			},
+		},
+	})
+	spec.Components = &ogen.Components{
+		Schemas: map[string]*ogen.Schema{
+			"StreamChunk": payload("content"),
+			"StreamDone":  payload("result"),
+		},
+	}
+	return spec
+}
+
+// Today itemSchema is invisible to the parser: MediaType.Schema comes out nil,
+// isBinaryStreamSchema(nil) reports true, SSE never auto-enables, and the response
+// degrades to io.Reader — which is why 3.1 and 3.2 generate byte-identical Go.
+func TestParseMediaTypeSSEItemSchemaEnablesFullShape(t *testing.T) {
+	api, err := parser.Parse(sse32Spec(), parser.Settings{})
+	require.NoError(t, err)
+
+	media := api.Operations[0].Responses.StatusCode[200].Content["text/event-stream"]
+	require.Equal(t, openapi.SSEEventShapeFull, media.XOgenSSEEventShape,
+		"itemSchema describes the full event envelope, not just the data payload")
+	require.NotNil(t, media.Schema, "itemSchema must populate MediaType.Schema")
+	require.Len(t, media.Schema.OneOf, 2, "the discriminated branches must survive parsing")
+}
+
+// Losing the contentSchema indirection is the difference between a typed event
+// and an opaque string, so assert the payload resolves through to its object.
+func TestParseMediaTypeSSEItemSchemaResolvesContentSchema(t *testing.T) {
+	api, err := parser.Parse(sse32Spec(), parser.Settings{})
+	require.NoError(t, err)
+
+	media := api.Operations[0].Responses.StatusCode[200].Content["text/event-stream"]
+	require.NotNil(t, media.Schema)
+
+	for i, branch := range media.Schema.OneOf {
+		var data *jsonschema.Schema
+		for _, prop := range branch.Properties {
+			if prop.Name == "data" {
+				data = prop.Schema
+			}
+		}
+		require.NotNilf(t, data, "branch %d must carry a data property", i)
+		require.Equalf(t, "application/json", data.ContentMediaType, "branch %d", i)
+		require.NotNilf(t, data.ContentSchema, "branch %d data.contentSchema must resolve", i)
+		require.Equalf(t, jsonschema.Object, data.ContentSchema.Type, "branch %d payload", i)
+	}
 }
