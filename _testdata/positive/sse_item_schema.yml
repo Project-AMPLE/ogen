@@ -1,0 +1,58 @@
+# OpenAPI 3.2 types a sequential media type through `itemSchema`. 3.1 had no
+# expression for it, so emitters degraded the whole SSE response to
+# `schema: {type: string}` and ogen lowered it to io.Reader.
+#
+# The payload is reached through `data.contentSchema` — a $ref describing the
+# PARSED content of the `data` string, not `data` itself. That indirection is
+# what makes the events typed rather than opaque.
+openapi: 3.2.0
+info:
+  title: SSE itemSchema
+  version: 1.0.0
+paths:
+  /stream:
+    post:
+      operationId: streamEvents
+      responses:
+        '200':
+          description: event stream
+          content:
+            text/event-stream:
+              itemSchema:
+                type: object
+                properties:
+                  event: {type: string}
+                  data: {type: string}
+                required: [event]
+                oneOf:
+                  - properties:
+                      event: {const: chunk}
+                      data:
+                        contentMediaType: application/json
+                        contentSchema: {$ref: '#/components/schemas/StreamChunk'}
+                  - properties:
+                      event: {const: done}
+                      data:
+                        contentMediaType: application/json
+                        contentSchema: {$ref: '#/components/schemas/StreamDone'}
+                  - properties:
+                      event: {const: error}
+                      data:
+                        contentMediaType: application/json
+                        contentSchema: {$ref: '#/components/schemas/StreamError'}
+components:
+  schemas:
+    StreamChunk:
+      type: object
+      properties:
+        content: {type: string}
+      required: [content]
+    StreamDone:
+      type: object
+      properties:
+        result: {type: string}
+    StreamError:
+      type: object
+      properties:
+        message: {type: string}
+      required: [message]

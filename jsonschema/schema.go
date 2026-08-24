@@ -53,6 +53,9 @@ type Schema struct {
 	Format           string // Schema format, optional.
 	ContentEncoding  string
 	ContentMediaType string
+	// ContentSchema describes the parsed content of a string instance, decoded
+	// per ContentMediaType. Nil unless the document sets `contentSchema`.
+	ContentSchema *Schema
 
 	Summary     string // Schema summary from Reference Object, optional.
 	Description string // Schema description, optional.

@@ -250,6 +250,10 @@ type Schema struct {
 	// The value of this property SHOULD be ignored if the instance
 	// described is not a string.
 	ContentMediaType string `json:"contentMediaType,omitempty" yaml:"contentMediaType,omitempty"`
+	// ContentSchema describes the PARSED content of a string instance, decoded
+	// per ContentMediaType — not the string itself. OpenAPI 3.2 SSE uses it to
+	// give the `data` field a real payload type.
+	ContentSchema *Schema `json:"contentSchema,omitempty" yaml:"contentSchema,omitempty"`
 
 	Common jsonschema.OpenAPICommon `json:"-" yaml:",inline"`
 }

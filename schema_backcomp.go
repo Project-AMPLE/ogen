@@ -53,6 +53,7 @@ func (s *Schema) ToJSONSchema() *jsonschema.RawSchema {
 		Deprecated:           s.Deprecated,
 		ContentEncoding:      s.ContentEncoding,
 		ContentMediaType:     s.ContentMediaType,
+		ContentSchema:        s.ContentSchema.ToJSONSchema(),
 		Discriminator:        s.Discriminator.ToJSONSchema(),
 		XML:                  s.XML.ToJSONSchema(),
 		Example:              s.Example,

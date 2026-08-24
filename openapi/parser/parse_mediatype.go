@@ -94,9 +94,18 @@ func (p *parser) parseMediaType(ct string, m ogen.Media, ctx *jsonpointer.Resolv
 		rerr = p.wrapLocation(p.file(ctx), locator, rerr)
 	}()
 
-	s, err := p.parseSchema(m.Schema, ctx)
+	// OpenAPI 3.2 types a sequential media type through `itemSchema` — the schema
+	// of ONE item — where 3.1 had no expression for it and emitters degraded the
+	// whole response to `schema: {type: string}`. Both spellings mean "this is
+	// the payload", so they populate the same field; `schema` wins if a document
+	// somehow carries both, since that is the older and more specific statement.
+	rawSchema, schemaField := m.Schema, "schema"
+	if rawSchema == nil && m.ItemSchema != nil {
+		rawSchema, schemaField = m.ItemSchema, "itemSchema"
+	}
+	s, err := p.parseSchema(rawSchema, ctx)
 	if err != nil {
-		return nil, errors.Wrap(err, "schema")
+		return nil, errors.Wrap(err, schemaField)
 	}
 
 	encodings := make(map[string]*openapi.Encoding, len(m.Encoding))
@@ -230,7 +239,14 @@ func (p *parser) parseMediaType(ct string, m ogen.Media, ctx *jsonpointer.Resolv
 			// Do not auto-enable SSE for raw byte stream schemas: the
 			// generator lowers them to io.Reader, which was the only way
 			// to describe an SSE response before typed SSE support.
+			//
+			// An `itemSchema` describes the whole event envelope (id/event/data/
+			// retry), so it defaults to the `full` shape. A 3.1 `schema` says
+			// nothing about the envelope and keeps the data-only default.
 			sseShape = openapi.SSEEventShapeDataOnly
+			if schemaField == "itemSchema" {
+				sseShape = openapi.SSEEventShapeFull
+			}
 		}
 	}
 
