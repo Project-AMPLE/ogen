@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"mime"
 	"path"
+	"slices"
 	"strings"
 
 	"github.com/go-faster/errors"
@@ -290,6 +291,11 @@ func (g *Generator) normalizeFullSSESchema(schema *jsonschema.Schema, media *ope
 	}
 
 	switch {
+	case schema.Type == jsonschema.Object && (len(schema.OneOf) > 0 || len(schema.AnyOf) > 0):
+		// OpenAPI 3.2 SSE: an envelope declaring the common fields, refined by
+		// one branch per event type. Distribute the envelope into each branch
+		// and normalize the result as a plain sum of events.
+		return g.normalizeFullSSESchema(distributeSSEEnvelope(schema), media)
 	case schema.Type == jsonschema.Object:
 		allowed := map[string]struct{}{
 			"id":    {},
@@ -314,6 +320,9 @@ func (g *Generator) normalizeFullSSESchema(schema *jsonschema.Schema, media *ope
 				)
 				continue
 			}
+			if prop.Name == "data" {
+				prop.Schema = g.sseDataPayloadSchema(prop.Schema)
+			}
 			prop.Required = prop.Name != "retry"
 			seen[prop.Name] = struct{}{}
 			clone.Properties = append(clone.Properties, prop)
@@ -335,15 +344,6 @@ func (g *Generator) normalizeFullSSESchema(schema *jsonschema.Schema, media *ope
 			if required {
 				clone.Required = append(clone.Required, name)
 			}
-		}
-
-		// A schema can be BOTH `type: object` and a `oneOf` of variants — that
-		// is exactly what OpenAPI 3.2 SSE emits: an envelope declaring the
-		// common id/event/data/retry fields, refined by one branch per event
-		// type. This arm matches first, so without recursing here the variants
-		// would keep their un-normalized shape and no discriminator.
-		if err := g.normalizeSSEComposition(&clone, media); err != nil {
-			return nil, err
 		}
 
 		return &clone, nil
@@ -382,38 +382,106 @@ func (g *Generator) normalizeFullSSESchema(schema *jsonschema.Schema, media *ope
 	}
 }
 
-// normalizeSSEComposition normalizes any oneOf/anyOf variants hanging off an SSE
-// envelope schema in place, then infers the event discriminator across them.
-func (g *Generator) normalizeSSEComposition(clone *jsonschema.Schema, media *openapi.MediaType) error {
-	for _, group := range []struct {
-		name     string
-		variants []*jsonschema.Schema
-	}{
-		{"oneOf", clone.OneOf},
-		{"anyOf", clone.AnyOf},
-	} {
-		if len(group.variants) == 0 {
+// distributeSSEEnvelope rewrites an object envelope with oneOf/anyOf event
+// variants into a plain sum whose every variant carries the envelope too.
+//
+// `{type: object, properties: P, oneOf: [V...]}` means "P and exactly one V",
+// the same as `oneOf: [allOf(P, V)...]`. OpenAPI 3.2 SSE is written this way:
+// the envelope types `event`/`data` as strings, each branch pins `event` to a
+// const and types `data` through contentSchema, usually WITHOUT repeating the
+// type. Generating the envelope as a struct beside a sum would carry `event`
+// and `data` twice, encoded twice, and leave each branch's typeless const
+// `event` as jx.Raw, which does not compile. Distributed, each branch is one
+// complete event whose properties inherit the envelope's types.
+func distributeSSEEnvelope(envelope *jsonschema.Schema) *jsonschema.Schema {
+	sum := *envelope
+	sum.Type = jsonschema.Empty
+	sum.Properties = nil
+	sum.Required = nil
+	sum.AdditionalProperties = nil
+	sum.PatternProperties = nil
+	sum.Item = nil
+	sum.OneOf = mergeSSEEnvelope(envelope, envelope.OneOf)
+	sum.AnyOf = mergeSSEEnvelope(envelope, envelope.AnyOf)
+	return &sum
+}
+
+func mergeSSEEnvelope(envelope *jsonschema.Schema, variants []*jsonschema.Schema) []*jsonschema.Schema {
+	if len(variants) == 0 {
+		return nil
+	}
+	merged := make([]*jsonschema.Schema, len(variants))
+	for i, variant := range variants {
+		if variant == nil {
+			// Left for normalizeFullSSESchema to report with its position.
 			continue
 		}
-		normalized := make([]*jsonschema.Schema, len(group.variants))
-		for i, variant := range group.variants {
-			if variant == nil {
-				return errors.Errorf("%s[%d] is nil", group.name, i)
-			}
-			n, err := g.normalizeFullSSESchema(variant, media)
-			if err != nil {
-				return errors.Wrapf(err, "%s[%d]", group.name, i)
-			}
-			normalized[i] = n
+		v := *variant
+		if v.Type == jsonschema.Empty {
+			v.Type = envelope.Type
 		}
-		if group.name == "oneOf" {
-			clone.OneOf = normalized
-		} else {
-			clone.AnyOf = normalized
+		v.Properties = nil
+		for _, prop := range envelope.Properties {
+			if own, ok := findProperty(variant.Properties, prop.Name); ok {
+				own.Schema = inheritSchemaType(own.Schema, prop.Schema)
+				prop = own
+			}
+			v.Properties = append(v.Properties, prop)
 		}
-		inferSSEEventDiscriminator(clone, normalized)
+		for _, prop := range variant.Properties {
+			if _, ok := findProperty(envelope.Properties, prop.Name); !ok {
+				v.Properties = append(v.Properties, prop)
+			}
+		}
+		v.Required = append(slices.Clone(envelope.Required), variant.Required...)
+		merged[i] = &v
 	}
-	return nil
+	return merged
+}
+
+func findProperty(props []jsonschema.Property, name string) (jsonschema.Property, bool) {
+	for _, p := range props {
+		if p.Name == name {
+			return p, true
+		}
+	}
+	return jsonschema.Property{}, false
+}
+
+// inheritSchemaType gives a typeless branch property the type its envelope
+// declares for it, as an instance has to satisfy both: `{const: chunk}` under
+// `{type: string}` is a string. Referenced and composed schemas keep their own.
+func inheritSchemaType(own, envelope *jsonschema.Schema) *jsonschema.Schema {
+	if own == nil || envelope == nil ||
+		own.Type != jsonschema.Empty || envelope.Type == jsonschema.Empty ||
+		own.Ref != (jsonschema.Ref{}) ||
+		len(own.OneOf) > 0 || len(own.AnyOf) > 0 || len(own.AllOf) > 0 {
+		return own
+	}
+	typed := *own
+	typed.Type = envelope.Type
+	if typed.Format == "" {
+		typed.Format = envelope.Format
+	}
+	return &typed
+}
+
+// sseDataPayloadSchema returns the type of an event's `data` field.
+//
+// On the wire `data` is always text. When a schema says that text is JSON
+// (`contentMediaType: application/json`) and describes the decoded value
+// (`contentSchema`), the decoded value is the payload: it is what a handler
+// sends and a client receives, encoded as the JSON text of the `data` field.
+// Any other content stays the declared string.
+func (g *Generator) sseDataPayloadSchema(data *jsonschema.Schema) *jsonschema.Schema {
+	if data == nil || data.ContentSchema == nil || data.ContentMediaType == "" {
+		return data
+	}
+	_, encoding, err := normalizeContentEncoding(data.ContentMediaType, g.opt.ContentTypeAliases)
+	if err != nil || !isJSONLikeEncoding(encoding) {
+		return data
+	}
+	return data.ContentSchema
 }
 
 // inferSSEEventDiscriminator points a sum of SSE events at its `event` field when
@@ -454,6 +522,37 @@ func inferSSEEventDiscriminator(sum *jsonschema.Schema, variants []*jsonschema.S
 	}
 
 	sum.Discriminator = &jsonschema.Discriminator{PropertyName: propName}
+}
+
+// nameSSEEventVariants names each inline variant of an event-discriminated sum
+// after its `event` const: `<Op>OKEventChunk` rather than `<Op>OKEvent0`.
+//
+// The `event:` value is the variant's identity on the wire, so a handler reads
+// as what it sends, and reordering the branches in the document does not
+// rename the Go types. Referenced and explicitly named variants keep their
+// names. sum is the output of normalizeFullSSESchema, whose variants are
+// private copies, so they are named in place.
+func nameSSEEventVariants(sum *jsonschema.Schema, sumName string) error {
+	if sum == nil || sum.Discriminator == nil || sum.Discriminator.PropertyName != "event" {
+		return nil
+	}
+	for _, variants := range [][]*jsonschema.Schema{sum.OneOf, sum.AnyOf} {
+		for _, variant := range variants {
+			if variant == nil || variant.Ref != (jsonschema.Ref{}) || variant.XOgenName != "" {
+				continue
+			}
+			value, ok := constStringProperty(variant, "event")
+			if !ok {
+				continue
+			}
+			name, err := pascalSpecial(sumName, value)
+			if err != nil {
+				return errors.Wrapf(err, "event %q", value)
+			}
+			variant.XOgenName = name
+		}
+	}
+	return nil
 }
 
 // constStringProperty returns the string const pinned on s's named property.
@@ -503,6 +602,8 @@ func (g *Generator) generateSSEContent(
 	eventSchemaName := typeName + "Event"
 	if shape == openapi.SSEEventShapeDataOnly {
 		eventSchemaName = typeName + "EventData"
+	} else if err := nameSSEEventVariants(schema, eventSchemaName); err != nil {
+		return nil, errors.Wrap(err, "name SSE event variants")
 	}
 
 	payload, err := g.generateSchema(ctx, eventSchemaName, schema, false, nil)

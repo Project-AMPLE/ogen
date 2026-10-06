@@ -40,6 +40,13 @@ paths:
                       data:
                         contentMediaType: application/json
                         contentSchema: {$ref: '#/components/schemas/StreamError'}
+                  # A non-JSON contentMediaType keeps `data` the envelope's
+                  # string: contentSchema is only a payload type when the
+                  # content is JSON.
+                  - properties:
+                      event: {const: log}
+                      data:
+                        contentMediaType: text/plain
 components:
   schemas:
     StreamChunk:
