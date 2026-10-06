@@ -21,4 +21,10 @@ Push to `gitlab`, naming the remote. Push a commit to `origin` too whenever ladd
 
 `124b1e69` + `25b8fb4e` (`unevaluatedProperties`), `d38a0c2c` (OpenAPI 3.1 binary multipart part), `c3f2e54e` (clear AI-agent env vars so goimports can parse `go env`). Put the why in each commit body: the next reader is reconciling against an upstream release.
 
+## Upstream PRs carried on `ample`
+
+| PR | Head taken | Merge | Upstream state (2026-10-06) | Why | Drop when |
+| --- | --- | --- | --- | --- | --- |
+| [ogen#1758](https://github.com/ogen-go/ogen/pull/1758) | `b7f1b3ae` | `15a751c7` | open, mergeable, unreviewed | a `$ref`'s sibling `default` leaked onto every reference; laddice-v2's metapiece merge-patch wrote `node_type=narrative` when omitted | upstream releases it |
+
 Upstream state, carried PRs and what each would change for laddice-v2: `../../laddice-v2/docs/external-libraries/ogen/upstream-status-2026-10.md`. The work plan: `../../laddice-v2/docs/plans/ogen-fork-vendor-and-upstream-picks.md`.
